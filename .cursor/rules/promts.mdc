@@ -1,0 +1,108 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+你将根据以下结构化提示进行 Python 项目的开发与测试，部署我会在本地测试完成后自行通过脚本进行本地docker打包成tar包后进行上传服务器部署。请按照需求进行详细实现.
+---
+**📌 一、明确需求（Requirement）**
+明确以下几点内容：
+- **目标功能描述：**
+```
+详细描述程序需要实现的功能、输入和输出要求。记住这部分实际先由用户输入！
+你需要先收集信息并获取上下文，以创建完成用户任务的详细计划，帮助用户进行逻辑分析和需求细化拆解，你需要具备的能力：
+1.进行一些信息收集以获取有关任务的更多上下文,以及需要确认部署的端口号。
+2.您还应该向用户提出澄清问题，以便更好地理解任务。
+3.一旦你对用户的请求有了更多的了解，你应该为如何完成任务制定一个详细的计划。如果Mermaid diagrams有助于使你的计划更清晰，请将其包括在内。
+4.询问用户是否对这个计划感到满意，或者是否想进行任何更改。把这看作是一次头脑风暴会议，你可以在会上讨论任务并计划完成任务的最佳方式。
+5.最后需要向用户确认计划[Y/N],当用户输入[Y]时，你才能进行按照计划进行下一步实现！
+```
+- **你需要使用的技术栈要求：**
+- Web 框架（FastAPI） 需要部署到线上，使用FastAPI + Gunicorn + UvicornWorker
+- HTTP 请求库（requests、httpx）
+- Docker（部署使用工具）
+- **目标运行环境：**
+- 本地开发环境（背景信息为：macOS、VS Code、终端、本地docker）
+- 服务器部署环境（背景信息为：云服务器、Ubuntu 版本、Linux、x86_64、Docker、域名：api.renoelis.top）
+---
+**📌 二、帮助用户代码开发（Code Implementation）**
+代码结构必须清晰，注释完善，符合规范。按照以下结构进行实现：
+1. **创建项目目录**
+- 建立项目文件夹，建议目录结构清晰。
+1. **虚拟环境创建与激活**（必须）
+```bash
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
+1. **项目依赖文件**（requirements.txt）
+- 明确列出所有依赖库版本。
+1. **代码结构与示例**
+- 代码必须分模块清晰组织，示例如下：
+```
+项目根目录
+├── app
+│   ├── main.py
+│   ├── routers（可选）
+│   └── utils（可选）
+├── requirements.txt
+├── .dockerignore
+├── Dockerfile
+└── docker-compose.yml（必须）
+```
+1. **示例代码模版**（以FastAPI为例，后续代码封装接口默认FastAPI）
+```python
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+app = FastAPI()
+class InputData(BaseModel):
+    param1: str
+    param2: int
+@app.post("/api/example")
+async def example_endpoint(data: InputData):
+    try:
+        result = {"msg": "处理结果", "data": data}
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+```
+**docker-compose.yml示例**，名称为**docker-compose-${服务名}.yml**
+示例（比如 time-service），其中网络默认为外部proxy_net：
+```docker
+services:
+  time-service:
+    image: time-service:latest
+    container_name: time-service
+    restart: always
+    ports:
+      - "port:port"
+    networks:
+      - proxy_net
+
+networks:
+  proxy_net:
+    external: true
+```
+---
+**📌 三、帮助用户进行功能与接口测试（API Testing）**
+推荐使用 curl 或 Postman 工具进行测试（示例）：
+模板：
+```bash
+curl -X POST <https://域名/api/example> \\
+  -H "Content-Type: application/json" \\
+  -d '{"param1":"测试","param2":123}'
+```
+确保返回数据符合预期（示例）：
+模板：
+```json
+{"msg": "处理结果", "data": {"param1":"测试","param2":123}}
+```
+---
+**📌 六、最终检查与文档输出（Final Checks & Documentation）**
+明确以下产出内容：
+- 实现项目代码内容
+- 功能测试结果确认
+- API测试与响应正确无误
+- 功能验证说明及API调用示例
+- 常见问题及排查方法（可选）

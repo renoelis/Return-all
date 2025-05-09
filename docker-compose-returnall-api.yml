@@ -1,0 +1,18 @@
+services:
+  returnall-api:
+    image: returnall-api:latest
+    container_name: returnall-api
+    restart: always
+    ports:
+      - "3006:3006"
+    volumes:
+      - ./logs:/app/logs
+    environment:
+      - TZ=Asia/Shanghai
+    networks:
+      - proxy_net
+
+networks:
+  proxy_net:
+    external: true
+    name: api-proxy_proxy_net
