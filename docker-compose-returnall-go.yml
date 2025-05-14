@@ -1,0 +1,23 @@
+services:
+  returnall-go:
+    image: returnall-go:latest
+    container_name: returnall-go
+    restart: always
+    ports:
+      - "3006:3006"
+    volumes:
+      - ./logs:/root/logs
+    environment:
+      - TZ=Asia/Shanghai
+    networks:
+      - proxy_net
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "5"
+
+networks:
+  proxy_net:
+    external: true
+    name: api-proxy_proxy_net 
