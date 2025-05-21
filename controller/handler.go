@@ -22,8 +22,8 @@ var logger *utils.Logger
 // InitLogger 初始化日志记录器
 func InitLogger(logPath string) error {
 	var err error
-	// 创建日志记录器，同时输出到控制台和文件
-	logger, err = utils.NewLogger("returnAll-api", logPath, true)
+	// 创建日志记录器，只输出到文件，不输出到控制台
+	logger, err = utils.NewLogger("returnAll-api", logPath, false)
 	return err
 }
 
@@ -50,31 +50,31 @@ func parseJSONBody(bodyBytes []byte) (interface{}, bool, string, string, map[str
 	// 提取错误详细信息
 	errorDetails := make(map[string]interface{})
 	errorDetails["error_type"] = "JSONDecodeError"
-	
+
 	// 尝试提取错误位置信息
 	var line, column, position int
 	var errorChar, lineContent, pointer, errorMessageBase string
-	
+
 	// 分析错误消息和位置
 	syntaxError, ok := err.(*json.SyntaxError)
 	if ok {
 		position = int(syntaxError.Offset)
-		
+
 		// 计算行号和列号
 		line, column = findLineAndColumn(originalStr, position)
-		
+
 		// 获取错误字符
 		if position < len(originalStr) {
 			errorChar = string(originalStr[position])
 		}
-		
+
 		// 获取错误行内容和优化错误位置
 		lines := strings.Split(originalStr, "\n")
-		
+
 		// 额外的错误位置优化：检查引号转义问题
 		// 这种问题经常在位置定位上有偏差
 		fixedPosition := false
-		
+
 		// 先检查是否有反斜杠后跟引号的问题 (如 "application/json\",)
 		for i := 0; i < len(lines); i++ {
 			// 针对常见的Content-Type等头部检查
@@ -85,7 +85,7 @@ func parseJSONBody(bodyBytes []byte) (interface{}, bool, string, string, map[str
 				fixedPosition = true
 				break
 			}
-			
+
 			// 检查任何键值对中存在的反斜杠引号问题
 			backslashQuoteIndex := strings.Index(lines[i], "\\\"")
 			if backslashQuoteIndex >= 0 {
@@ -96,12 +96,12 @@ func parseJSONBody(bodyBytes []byte) (interface{}, bool, string, string, map[str
 				break
 			}
 		}
-		
+
 		// 如果上面的检查没有发现问题，继续检查其他常见问题
 		if !fixedPosition && line > 1 && (strings.Contains(err.Error(), "invalid character") || strings.Contains(err.Error(), "unexpected") || strings.Contains(err.Error(), "delimiter")) {
 			// 检查前一行是否有未正确闭合的引号或转义字符问题
 			prevLine := lines[line-2]
-			
+
 			// 检查是否有未正确转义的引号，如 "something\"
 			badEscapeQuoteIndex := strings.LastIndex(prevLine, "\\\"")
 			if badEscapeQuoteIndex >= 0 {
@@ -110,7 +110,7 @@ func parseJSONBody(bodyBytes []byte) (interface{}, bool, string, string, map[str
 				column = badEscapeQuoteIndex + 1 // 指向问题字符的位置
 				fixedPosition = true
 			}
-			
+
 			// 检查是否有引号后面多了引号的情况，如 "something""
 			badQuoteIndex := strings.LastIndex(prevLine, "\"\"")
 			if badQuoteIndex >= 0 {
@@ -119,9 +119,9 @@ func parseJSONBody(bodyBytes []byte) (interface{}, bool, string, string, map[str
 				column = badQuoteIndex + 1 // 指向第二个引号
 				fixedPosition = true
 			}
-			
+
 			// 检查是否有JSON属性值中未闭合的引号，如 "value": "something 没有闭合
-			if strings.Count(prevLine, "\"") % 2 != 0 {
+			if strings.Count(prevLine, "\"")%2 != 0 {
 				// 查找最后一个引号的位置
 				lastQuoteIndex := strings.LastIndex(prevLine, "\"")
 				if lastQuoteIndex >= 0 {
@@ -132,7 +132,7 @@ func parseJSONBody(bodyBytes []byte) (interface{}, bool, string, string, map[str
 				}
 			}
 		}
-		
+
 		// 获取更新后的行内容和指针位置
 		if line > 0 && line <= len(lines) {
 			if !fixedPosition {
@@ -140,10 +140,10 @@ func parseJSONBody(bodyBytes []byte) (interface{}, bool, string, string, map[str
 			}
 			pointer = strings.Repeat(" ", column-1) + "^"
 		}
-		
+
 		// 解析Go错误消息，提取有效部分
 		goErrMsg := err.Error()
-		
+
 		// 尝试将Go的错误消息转换为Python风格
 		if strings.Contains(goErrMsg, "invalid character") {
 			if strings.Contains(goErrMsg, "after") {
@@ -161,14 +161,14 @@ func parseJSONBody(bodyBytes []byte) (interface{}, bool, string, string, map[str
 		// 处理类型错误
 		position = int(unmarshalTypeError.Offset)
 		line, column = findLineAndColumn(originalStr, position)
-		
+
 		lines := strings.Split(originalStr, "\n")
 		if line > 0 && line <= len(lines) {
 			lineContent = lines[line-1]
 			pointer = strings.Repeat(" ", column-1) + "^"
 		}
-		
-		errorMessageBase = fmt.Sprintf("Cannot unmarshal %v into type %v", 
+
+		errorMessageBase = fmt.Sprintf("Cannot unmarshal %v into type %v",
 			unmarshalTypeError.Value, unmarshalTypeError.Type.String())
 	} else {
 		// 其他类型的错误，尝试提供一个适当的位置
@@ -177,12 +177,12 @@ func parseJSONBody(bodyBytes []byte) (interface{}, bool, string, string, map[str
 		column = 1
 		errorMessageBase = err.Error()
 	}
-	
+
 	// 构建Python风格的错误消息
-	pythonStyleError := fmt.Sprintf("%s: line %d column %d (char %d)", 
+	pythonStyleError := fmt.Sprintf("%s: line %d column %d (char %d)",
 		errorMessageBase, line, column, position)
 	errorMsg := fmt.Sprintf("JSON解析错误: %s", pythonStyleError)
-	
+
 	// 将位置信息添加到错误详情中 - 按照指定顺序添加字段
 	// 删除message字段，确保pointer在line_content后面
 	errorDetails["error_type"] = "JSONDecodeError"
@@ -192,7 +192,7 @@ func parseJSONBody(bodyBytes []byte) (interface{}, bool, string, string, map[str
 	errorDetails["error_char"] = errorChar
 	errorDetails["line_content"] = lineContent
 	errorDetails["pointer"] = pointer
-	
+
 	return compactStr, false, errorMsg, originalStr, errorDetails
 }
 
@@ -205,14 +205,14 @@ func findLineAndColumn(text string, offset int) (int, int) {
 	if offset > len(text) {
 		offset = len(text)
 	}
-	
+
 	// 计算到偏移位置之前的所有字符
 	beforeOffset := text[:offset]
-	
+
 	// 计算换行符的数量，即行号
 	lines := strings.Split(beforeOffset, "\n")
 	line := len(lines)
-	
+
 	// 最后一行的内容长度，即列号
 	var column int
 	if line > 0 {
@@ -220,7 +220,7 @@ func findLineAndColumn(text string, offset int) (int, int) {
 	} else {
 		column = 1
 	}
-	
+
 	return line, column
 }
 
@@ -241,7 +241,7 @@ func ReturnAllRequest(c *gin.Context) {
 	// 获取请求信息
 	requestInfo := model.NewRequestInfo(requestID)
 	requestInfo.Method = c.Request.Method
-	
+
 	// 修正URL信息，这里重新构建URL而不是直接使用gin提供的URL
 	// 确保URL中不包含多余的斜杠并使用正确的协议
 	scheme := "http"
@@ -252,19 +252,19 @@ func ReturnAllRequest(c *gin.Context) {
 	} else if c.Request.TLS != nil {
 		scheme = "https"
 	}
-	
+
 	host := c.Request.Host
-	
+
 	// 规范化URL路径，确保不包含多余斜杠
 	urlPath := c.Request.URL.Path
 	reg := regexp.MustCompile(`/+`)
 	urlPath = reg.ReplaceAllString(urlPath, "/")
-	
+
 	query := c.Request.URL.RawQuery
 	if query != "" {
 		query = "?" + query
 	}
-	
+
 	// 构建标准URL
 	requestInfo.URL = scheme + "://" + host + urlPath + query
 
@@ -282,10 +282,10 @@ func ReturnAllRequest(c *gin.Context) {
 
 	// 获取请求头信息，确保统一格式并避免重复
 	headers := make(map[string]string)
-	
+
 	// 首先获取Host头
 	headers["Host"] = c.Request.Host
-	
+
 	// 然后获取所有其他标准头信息
 	for key, values := range c.Request.Header {
 		if len(values) > 0 {
@@ -293,7 +293,7 @@ func ReturnAllRequest(c *gin.Context) {
 			headers[key] = values[0] // 只取第一个值
 		}
 	}
-	
+
 	// 设置请求头
 	requestInfo.Headers = headers
 
@@ -302,7 +302,7 @@ func ReturnAllRequest(c *gin.Context) {
 	if clientIP != "" {
 		// 直接使用Gin框架提供的ClientIP方法获取IP
 		requestInfo.Client.Host = clientIP
-		
+
 		// 尝试从X-Forwarded-For或X-Real-IP头获取更多信息
 		// 优先使用X-Real-IP
 		realIP := c.Request.Header.Get("X-Real-IP")
@@ -318,7 +318,7 @@ func ReturnAllRequest(c *gin.Context) {
 				}
 			}
 		}
-		
+
 		// 如果需要端口信息，从RemoteAddr中提取
 		_, port, err := net.SplitHostPort(c.Request.RemoteAddr)
 		if err == nil && port != "" {
@@ -363,11 +363,11 @@ func ReturnAllRequest(c *gin.Context) {
 func ReturnAllWithAnyPath(c *gin.Context) {
 	// 获取完整路径
 	path := c.Param("path")
-	
+
 	// 规范化路径：使用正则替换连续的斜杠为单个斜杠
 	reg := regexp.MustCompile(`/+`)
 	path = reg.ReplaceAllString(path, "/")
-	
+
 	// 生成请求ID
 	requestID := uuid.New().String()
 
@@ -383,7 +383,7 @@ func ReturnAllWithAnyPath(c *gin.Context) {
 	// 获取请求信息
 	requestInfo := model.NewRequestInfo(requestID)
 	requestInfo.Method = c.Request.Method
-	
+
 	// 修正URL信息，这里重新构建URL而不是直接使用gin提供的URL
 	// 确保URL中不包含多余的斜杠并使用正确的协议
 	scheme := "http"
@@ -394,21 +394,21 @@ func ReturnAllWithAnyPath(c *gin.Context) {
 	} else if c.Request.TLS != nil {
 		scheme = "https"
 	}
-	
+
 	host := c.Request.Host
-	
+
 	// 规范化URL路径，确保不包含多余斜杠
 	urlPath := c.Request.URL.Path
 	urlPath = reg.ReplaceAllString(urlPath, "/")
-	
+
 	query := c.Request.URL.RawQuery
 	if query != "" {
 		query = "?" + query
 	}
-	
+
 	// 构建标准URL
 	requestInfo.URL = scheme + "://" + host + urlPath + query
-	
+
 	// 设置规范化后的路径 - 该字段保留在顶层
 	requestInfo.Path = path
 	// 不再在path_params中设置path字段
@@ -417,7 +417,7 @@ func ReturnAllWithAnyPath(c *gin.Context) {
 	// 将路径拆分成多个部分
 	// 保留原始路径，但过滤掉空路径部分
 	splitParts := strings.Split(path, "/")
-	
+
 	// 过滤掉空字符串部分
 	var pathParts []string
 	for _, part := range splitParts {
@@ -425,7 +425,7 @@ func ReturnAllWithAnyPath(c *gin.Context) {
 			pathParts = append(pathParts, part)
 		}
 	}
-	
+
 	requestInfo.PathParts = pathParts
 
 	// 设置路径参数 - 移除"path"参数，避免冗余
@@ -434,7 +434,7 @@ func ReturnAllWithAnyPath(c *gin.Context) {
 			requestInfo.PathParams[param.Key] = param.Value
 		}
 	}
-	
+
 	// 添加路径各部分作为参数，只添加非空部分
 	for i, part := range pathParts {
 		requestInfo.PathParams[fmt.Sprintf("path_part_%d", i)] = part
@@ -449,10 +449,10 @@ func ReturnAllWithAnyPath(c *gin.Context) {
 
 	// 获取请求头信息，确保统一格式并避免重复
 	headers := make(map[string]string)
-	
+
 	// 首先获取Host头
 	headers["Host"] = c.Request.Host
-	
+
 	// 然后获取所有其他标准头信息
 	for key, values := range c.Request.Header {
 		if len(values) > 0 {
@@ -460,7 +460,7 @@ func ReturnAllWithAnyPath(c *gin.Context) {
 			headers[key] = values[0] // 只取第一个值
 		}
 	}
-	
+
 	// 设置请求头
 	requestInfo.Headers = headers
 
@@ -469,7 +469,7 @@ func ReturnAllWithAnyPath(c *gin.Context) {
 	if clientIP != "" {
 		// 直接使用Gin框架提供的ClientIP方法获取IP
 		requestInfo.Client.Host = clientIP
-		
+
 		// 优先使用X-Real-IP
 		realIP := c.Request.Header.Get("X-Real-IP")
 		if realIP != "" {
@@ -484,7 +484,7 @@ func ReturnAllWithAnyPath(c *gin.Context) {
 				}
 			}
 		}
-		
+
 		// 如果需要端口信息，从RemoteAddr中提取
 		_, port, err := net.SplitHostPort(c.Request.RemoteAddr)
 		if err == nil && port != "" {
@@ -534,4 +534,4 @@ func RootHandler(c *gin.Context) {
 		},
 		"version": "1.0.0",
 	})
-} 
+}
