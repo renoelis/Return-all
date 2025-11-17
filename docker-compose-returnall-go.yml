@@ -5,10 +5,9 @@ services:
     restart: always
     ports:
       - "3006:3006"
-    volumes:
-      - ./logs:/root/logs
     environment:
       - TZ=Asia/Shanghai
+      - MAX_BODY_BYTES=10485760
     networks:
       - proxy_net
     logging:
@@ -19,5 +18,5 @@ services:
 
 networks:
   proxy_net:
-    external: true
+    #external: true
     name: api-proxy_proxy_net 

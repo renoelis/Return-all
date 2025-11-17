@@ -2,6 +2,7 @@ package controller
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,26 +12,14 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
-	"github.com/google/uuid"
+	"github.com/renoelis/returnall-go/config"
 	"github.com/renoelis/returnall-go/model"
-	"github.com/renoelis/returnall-go/utils"
 )
 
-// 全局日志记录器
-var logger *utils.Logger
-
-// InitLogger 初始化日志记录器
-func InitLogger(logPath string) error {
-	var err error
-	// 创建日志记录器，只输出到文件，不输出到控制台
-	logger, err = utils.NewLogger("returnAll-api", logPath, false)
-	return err
-}
-
 // parseJSONBody 解析请求体，尝试转换为JSON
-func parseJSONBody(bodyBytes []byte) (interface{}, bool, string, string, map[string]interface{}) {
+func parseJSONBody(bodyBytes []byte) (interface{}, bool, string, map[string]interface{}) {
 	if len(bodyBytes) == 0 {
-		return nil, true, "", "", nil
+		return nil, true, "", nil
 	}
 
 	// 保留原始字符串，包括换行符
@@ -39,7 +28,7 @@ func parseJSONBody(bodyBytes []byte) (interface{}, bool, string, string, map[str
 	var jsonData interface{}
 	err := json.Unmarshal(bodyBytes, &jsonData)
 	if err == nil {
-		return jsonData, true, "", originalStr, nil
+		return jsonData, true, "", nil
 	}
 
 	// 如果请求体不是有效的JSON，则以紧凑字符串形式返回
@@ -193,7 +182,7 @@ func parseJSONBody(bodyBytes []byte) (interface{}, bool, string, string, map[str
 	errorDetails["line_content"] = lineContent
 	errorDetails["pointer"] = pointer
 
-	return compactStr, false, errorMsg, originalStr, errorDetails
+	return compactStr, false, errorMsg, errorDetails
 }
 
 // findLineAndColumn 根据字节偏移计算行号和列号
@@ -224,22 +213,69 @@ func findLineAndColumn(text string, offset int) (int, int) {
 	return line, column
 }
 
+// readRequestBody 以流式方式读取请求体，并限制最大大小
+func readRequestBody(c *gin.Context) ([]byte, error) {
+	maxBodyBytes := config.GetMaxBodyBytes()
+	var buf bytes.Buffer
+	lr := io.LimitReader(c.Request.Body, maxBodyBytes+1)
+	_, err := io.Copy(&buf, lr)
+	if err != nil {
+		return nil, err
+	}
+	if int64(buf.Len()) > maxBodyBytes {
+		return nil, fmt.Errorf("请求体过大，超过限制 %d 字节", maxBodyBytes)
+	}
+	body := buf.Bytes()
+	// 由于body已被读取，需要重新设置，以便其他中间件或处理函数可以再次读取
+	c.Request.Body = io.NopCloser(bytes.NewReader(body))
+	return body, nil
+}
+
+// shouldTreatAsJSON 根据 Content-Type 和内容粗略判断是否按 JSON 处理
+func shouldTreatAsJSON(c *gin.Context, body []byte) bool {
+	contentType := strings.ToLower(c.GetHeader("Content-Type"))
+	if strings.Contains(contentType, "application/json") {
+		return true
+	}
+	trimmed := bytes.TrimLeft(body, " \t\r\n")
+	if len(trimmed) == 0 {
+		return false
+	}
+	switch trimmed[0] {
+	case '{', '[':
+		return true
+	default:
+		return false
+	}
+}
+
+// writeJSONResponse 根据客户端是否支持 gzip 输出 JSON，使用 chunked 传输
+func writeJSONResponse(c *gin.Context, status int, payload interface{}) {
+	acceptEncoding := c.GetHeader("Accept-Encoding")
+	c.Status(status)
+	if strings.Contains(acceptEncoding, "gzip") {
+		c.Header("Content-Encoding", "gzip")
+		c.Header("Content-Type", "application/json; charset=utf-8")
+		gw := gzip.NewWriter(c.Writer)
+		defer gw.Close()
+		_ = json.NewEncoder(gw).Encode(payload)
+		return
+	}
+	c.Header("Content-Type", "application/json; charset=utf-8")
+	_ = json.NewEncoder(c.Writer).Encode(payload)
+}
+
 // ReturnAllRequest 处理 POST /returnAll 请求
 func ReturnAllRequest(c *gin.Context) {
-	// 生成请求ID
-	requestID := uuid.New().String()
-
-	// 读取请求体
-	bodyBytes, err := io.ReadAll(c.Request.Body)
+	// 读取请求体（流式并限制大小）
+	bodyBytes, err := readRequestBody(c)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取请求体失败"})
 		return
 	}
-	// 由于body已被读取，需要重新设置，以便其他中间件或处理函数可以再次读取
-	c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 
 	// 获取请求信息
-	requestInfo := model.NewRequestInfo(requestID)
+	requestInfo := model.NewRequestInfo()
 	requestInfo.Method = c.Request.Method
 
 	// 修正URL信息，这里重新构建URL而不是直接使用gin提供的URL
@@ -276,7 +312,9 @@ func ReturnAllRequest(c *gin.Context) {
 	// 获取查询参数
 	queryParams := make(map[string]string)
 	for key, values := range c.Request.URL.Query() {
-		queryParams[key] = values[0] // 只取第一个值
+		if len(values) > 0 {
+			queryParams[key] = values[0] // 只取第一个值
+		}
 	}
 	requestInfo.QueryParams = queryParams
 
@@ -340,23 +378,31 @@ func ReturnAllRequest(c *gin.Context) {
 		}
 	}
 
-	// 解析请求体
-	bodyContent, isValidJSON, errorMsg, originalStr, errorDetails := parseJSONBody(bodyBytes)
-	requestInfo.Body = bodyContent
-	requestInfo.IsValidJSON = isValidJSON
-	if !isValidJSON && errorMsg != "" {
-		requestInfo.JSONError = errorMsg
-		requestInfo.OriginalBody = originalStr
-		requestInfo.ErrorDetails = errorDetails
-	}
-
-	// 记录日志
-	if logger != nil {
-		logger.Info(fmt.Sprintf("Received request: %s", requestID), requestInfo)
+	// 根据内容判断 JSON / 文本，并填充 body 相关字段
+	isJSON := shouldTreatAsJSON(c, bodyBytes)
+	contentType := c.GetHeader("Content-Type")
+	if isJSON {
+		if contentType == "" {
+			contentType = "application/json"
+		}
+		requestInfo.BodyMime = contentType
+		bodyContent, isValidJSON, errorMsg, errorDetails := parseJSONBody(bodyBytes)
+		requestInfo.Body = bodyContent
+		requestInfo.IsJSON = true
+		requestInfo.IsValidJSON = isValidJSON
+		if !isValidJSON && errorMsg != "" {
+			requestInfo.JSONError = errorMsg
+			requestInfo.ErrorDetails = errorDetails
+		}
+	} else {
+		requestInfo.BodyMime = "text/plain; charset=UTF-8"
+		requestInfo.Body = string(bodyBytes)
+		requestInfo.IsJSON = false
+		requestInfo.IsValidJSON = false
 	}
 
 	// 返回请求信息
-	c.JSON(http.StatusOK, model.NewResponse(requestInfo))
+	writeJSONResponse(c, http.StatusOK, model.NewResponse(requestInfo))
 }
 
 // ReturnAllWithAnyPath 处理 POST /returnAll/* 任意路径请求
@@ -368,20 +414,15 @@ func ReturnAllWithAnyPath(c *gin.Context) {
 	reg := regexp.MustCompile(`/+`)
 	path = reg.ReplaceAllString(path, "/")
 
-	// 生成请求ID
-	requestID := uuid.New().String()
-
-	// 读取请求体
-	bodyBytes, err := io.ReadAll(c.Request.Body)
+	// 读取请求体（流式并限制大小）
+	bodyBytes, err := readRequestBody(c)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "读取请求体失败"})
 		return
 	}
-	// 由于body已被读取，需要重新设置，以便其他中间件或处理函数可以再次读取
-	c.Request.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
 
 	// 获取请求信息
-	requestInfo := model.NewRequestInfo(requestID)
+	requestInfo := model.NewRequestInfo()
 	requestInfo.Method = c.Request.Method
 
 	// 修正URL信息，这里重新构建URL而不是直接使用gin提供的URL
@@ -506,32 +547,41 @@ func ReturnAllWithAnyPath(c *gin.Context) {
 		}
 	}
 
-	// 解析请求体
-	bodyContent, isValidJSON, errorMsg, originalStr, errorDetails := parseJSONBody(bodyBytes)
-	requestInfo.Body = bodyContent
-	requestInfo.IsValidJSON = isValidJSON
-	if !isValidJSON && errorMsg != "" {
-		requestInfo.JSONError = errorMsg
-		requestInfo.OriginalBody = originalStr
-		requestInfo.ErrorDetails = errorDetails
-	}
-
-	// 记录日志
-	if logger != nil {
-		logger.Info(fmt.Sprintf("Received any-path request: %s", requestID), requestInfo)
+	// 根据内容判断 JSON / 文本，并填充 body 相关字段
+	isJSON := shouldTreatAsJSON(c, bodyBytes)
+	contentType := c.GetHeader("Content-Type")
+	if isJSON {
+		if contentType == "" {
+			contentType = "application/json"
+		}
+		requestInfo.BodyMime = contentType
+		bodyContent, isValidJSON, errorMsg, errorDetails := parseJSONBody(bodyBytes)
+		requestInfo.Body = bodyContent
+		requestInfo.IsJSON = true
+		requestInfo.IsValidJSON = isValidJSON
+		if !isValidJSON && errorMsg != "" {
+			requestInfo.JSONError = errorMsg
+			requestInfo.ErrorDetails = errorDetails
+		}
+	} else {
+		requestInfo.BodyMime = "text/plain; charset=UTF-8"
+		requestInfo.Body = string(bodyBytes)
+		requestInfo.IsJSON = false
+		requestInfo.IsValidJSON = false
 	}
 
 	// 返回请求信息
-	c.JSON(http.StatusOK, model.NewResponse(requestInfo))
+	writeJSONResponse(c, http.StatusOK, model.NewResponse(requestInfo))
 }
 
 // RootHandler 处理 GET / 根路径请求
 func RootHandler(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
+	payload := gin.H{
 		"message": "returnAll API服务正在运行",
 		"endpoints": gin.H{
 			"returnAll": "/returnAll (POST) - 返回请求的所有内容",
 		},
 		"version": "1.0.0",
-	})
+	}
+	writeJSONResponse(c, http.StatusOK, payload)
 }

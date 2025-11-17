@@ -6,8 +6,6 @@ import (
 
 // RequestInfo 请求信息结构体
 type RequestInfo struct {
-	RequestID    string                 `json:"request_id"`
-	Timestamp    string                 `json:"timestamp"`
 	Method       string                 `json:"method"`
 	URL          string                 `json:"url"`
 	Path         string                 `json:"path,omitempty"`
@@ -17,9 +15,10 @@ type RequestInfo struct {
 	Headers      map[string]string      `json:"headers"`
 	Client       ClientInfo             `json:"client"`
 	Body         interface{}            `json:"body"`
+	BodyMime     string                 `json:"body_mime,omitempty"`
+	IsJSON       bool                   `json:"is_json"`
 	IsValidJSON  bool                   `json:"is_valid_json"`
 	JSONError    string                 `json:"json_error,omitempty"`
-	OriginalBody string                 `json:"original_body,omitempty"`
 	ErrorDetails map[string]interface{} `json:"error_details,omitempty"`
 }
 
@@ -33,17 +32,18 @@ type ClientInfo struct {
 type Response struct {
 	Message     string      `json:"message"`
 	RequestInfo RequestInfo `json:"request_info"`
-	LogID       string      `json:"log_id"`
+	Timestamp   string      `json:"timestamp"`
 }
 
+var cstZone = time.FixedZone("CST", 8*3600)
+
 // NewRequestInfo 创建请求信息对象
-func NewRequestInfo(requestID string) RequestInfo {
+func NewRequestInfo() RequestInfo {
 	return RequestInfo{
-		RequestID:  requestID,
-		Timestamp:  time.Now().Format(time.RFC3339),
-		PathParams: make(map[string]string),
-		Headers:    make(map[string]string),
-		Client:     ClientInfo{},
+		PathParams:  make(map[string]string),
+		QueryParams: make(map[string]string),
+		Headers:     make(map[string]string),
+		Client:      ClientInfo{},
 	}
 }
 
@@ -52,7 +52,7 @@ func NewResponse(requestInfo RequestInfo) Response {
 	return Response{
 		Message:     "success",
 		RequestInfo: requestInfo,
-		LogID:       requestInfo.RequestID,
+		Timestamp:   time.Now().In(cstZone).Format("2006-01-02 15:04:05"),
 	}
 }
 
@@ -66,4 +66,4 @@ type JSONErrorDetails struct {
 	ErrorChar   string `json:"error_char,omitempty"`
 	LineContent string `json:"line_content,omitempty"`
 	Pointer     string `json:"pointer,omitempty"`
-} 
+}

@@ -2,11 +2,13 @@ package config
 
 import (
 	"os"
+	"strconv"
 )
 
 // 默认配置
 const (
-	DefaultPort = "3006"
+	DefaultPort         = "3006"
+	DefaultMaxBodyBytes = 2 * 1024 * 1024
 )
 
 // GetPort 获取服务端口号
@@ -18,11 +20,16 @@ func GetPort() string {
 	return port
 }
 
-// GetLogPath 获取日志文件路径
-func GetLogPath() string {
-	logPath := os.Getenv("LOG_PATH")
-	if logPath == "" {
-		return "logs/api.log"
+// GetMaxBodyBytes 获取请求体最大字节数
+// 优先从环境变量 MAX_BODY_BYTES 读取，读取失败或非法时回退到默认值
+func GetMaxBodyBytes() int64 {
+	val := os.Getenv("MAX_BODY_BYTES")
+	if val == "" {
+		return DefaultMaxBodyBytes
 	}
-	return logPath
-} 
+	n, err := strconv.ParseInt(val, 10, 64)
+	if err != nil || n <= 0 {
+		return DefaultMaxBodyBytes
+	}
+	return n
+}

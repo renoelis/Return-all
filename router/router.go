@@ -1,9 +1,6 @@
 package router
 
 import (
-	"fmt"
-	"time"
-
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/renoelis/returnall-go/controller"
@@ -12,27 +9,8 @@ import (
 // 自定义简化中间件 - 只显示请求成功/失败状态
 func SimpleLogger() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		// 开始时间
-		start := time.Now()
-		path := c.Request.URL.Path
-
 		// 处理请求
 		c.Next()
-
-		// 结束时间
-		end := time.Now()
-		latency := end.Sub(start)
-		method := c.Request.Method
-		statusCode := c.Writer.Status()
-
-		// 简洁输出，只显示状态
-		statusText := "成功"
-		if statusCode >= 400 {
-			statusText = "失败"
-		}
-
-		fmt.Printf("请求: %s %s | 状态: %s (%d) | 耗时: %v\n",
-			method, path, statusText, statusCode, latency)
 	}
 }
 
